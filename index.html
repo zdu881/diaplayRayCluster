@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>节点监控网络</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Ray集群监控系统</h1>
+            <div class="cluster-info">
+                <small>连接到: http://10.30.2.11:8265</small>
+            </div>
+            <div class="controls">
+                <button id="pauseBtn">暂停动画</button>
+                <button id="resetBtn">刷新数据</button>
+                <label>
+                    动画速度: 
+                    <input type="range" id="speedSlider" min="0.5" max="3" step="0.1" value="1">
+                </label>
+            </div>
+        </header>
+        
+                <div class="dashboard">
+            <div class="stats-panel">
+                <h3>集群统计</h3>
+                <div class="stat-item">
+                    <span>活跃节点:</span>
+                    <span id="activeNodes">0</span>
+                </div>
+                <div class="stat-item">
+                    <span>平均CPU使用率:</span>
+                    <span id="avgCpu">0%</span>
+                </div>
+                <div class="stat-item">
+                    <span>平均内存使用率:</span>
+                    <span id="avgMemory">0%</span>
+                </div>
+                <div class="stat-item">
+                    <span>有线连接节点:</span>
+                    <span id="wiredNodes">0</span>
+                </div>
+                <div class="stat-item">
+                    <span>无线连接节点:</span>
+                    <span id="wirelessNodes">0</span>
+                </div>
+                <div class="stat-item">
+                    <span>总任务数:</span>
+                    <span id="totalTasks">0</span>
+                </div>
+                <div class="stat-item">
+                    <span>数据源:</span>
+                    <span id="dataSource">连接中...</span>
+                </div>
+            </div>
+            
+            <div class="legend">
+                <h3>状态说明</h3>
+                <div class="legend-item">
+                    <div class="legend-color low"></div>
+                    <span>低负载 (0-30%)</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color medium"></div>
+                    <span>中等负载 (31-70%)</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color high"></div>
+                    <span>高负载 (71-100%)</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color dead"></div>
+                    <span>节点离线</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="node-list">
+            <h3>节点列表</h3>
+            <div id="nodeListContainer"></div>
+        </div>
+    </div>
+    
+    <script src="ray_monitor.js"></script>
+</body>
+</html>
