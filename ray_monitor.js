@@ -1,6 +1,6 @@
 // Ray集群API配置
-const RAY_API_BASE = 'http://10.30.2.11:8265/api/v0';
-const NODES_API = `${RAY_API_BASE}/nodes`;
+const RAY_API_BASE = 'http://10.30.2.11:8888';
+const NODES_API = `${RAY_API_BASE}/`;
 
 // 节点数据存储
 let nodeData = [];
@@ -54,33 +54,22 @@ class RayClusterMonitor {
             const data = await response.json();
             console.log('Ray API响应:', data);
             
-            // 修正数据路径 - 根据实际API响应结构
-            if (data && data.result && data.data && data.data.result && data.data.result.result) {
-                const rayNodes = data.data.result.result;
+            // 新API返回结构更清晰，直接使用data.data.nodes
+            if (data && data.result && data.data && data.data.nodes) {
+                const rayNodes = data.data.nodes;
                 console.log('找到节点数量:', rayNodes.length);
+                nodeData = rayNodes; // 直接使用处理过的节点数据
+                document.getElementById('dataSource').textContent = `已连接到Ray集群 (${nodeData.length}个节点)`;
+                return true;
+            } else if (data && data.data && data.data.result && data.data.result.result) {
+                // 备用路径：原始API格式
+                const rayNodes = data.data.result.result;
+                console.log('使用备用路径，找到节点数量:', rayNodes.length);
                 nodeData = this.parseRayNodes(rayNodes);
                 document.getElementById('dataSource').textContent = `已连接到Ray集群 (${nodeData.length}个节点)`;
                 return true;
             } else {
-                console.error('API响应格式错误，尝试备用路径:', data);
-                // 如果主路径失败，尝试其他可能的路径
-                let rayNodes = null;
-                if (data.result && Array.isArray(data.result)) {
-                    rayNodes = data.result;
-                } else if (data.data && data.data.result && Array.isArray(data.data.result)) {
-                    rayNodes = data.data.result;
-                } else if (data.nodes && Array.isArray(data.nodes)) {
-                    rayNodes = data.nodes;
-                }
-                
-                if (rayNodes && rayNodes.length > 0) {
-                    console.log('使用备用路径，找到节点数量:', rayNodes.length);
-                    nodeData = this.parseRayNodes(rayNodes);
-                    document.getElementById('dataSource').textContent = `已连接到Ray集群 (${nodeData.length}个节点)`;
-                    return true;
-                } else {
-                    throw new Error('无法找到节点数据');
-                }
+                throw new Error('无法找到节点数据');
             }
             
         } catch (error) {
@@ -100,29 +89,24 @@ class RayClusterMonitor {
     }
 
     parseRayNodes(rayNodes) {
-        console.log('解析Ray节点数据，节点数量:', rayNodes.length);
+        // 备用方法：如果API返回原始节点数据，进行简单解析
+        console.log('解析原始Ray节点数据，节点数量:', rayNodes.length);
         const parsedNodes = [];
         
         rayNodes.forEach((node, index) => {
             console.log(`解析节点 ${index + 1}:`, node.node_ip, node.state);
             
-            // 获取节点标识符 - 寻找resources_total中的第三个非标准key
             const nodeIdentifier = this.extractNodeIdentifier(node.resources_total);
-            console.log('节点标识符:', nodeIdentifier);
-            
-            // 检查连接类型
             const connectionType = this.getConnectionType(node.resources_total);
             
-            // 模拟CPU和内存使用率（因为Ray API通常不直接提供实时使用率）
             const cpuUsage = this.simulateUsage(20, 80);
             const memoryUsage = this.simulateUsage(15, 75);
             const gpuUsage = node.resources_total.GPU ? this.simulateUsage(10, 90) : 0;
             
-            // 根据节点状态和类型生成任务
             const tasks = this.generateNodeTasks(node, cpuUsage, memoryUsage, gpuUsage);
             
             const parsedNode = {
-                id: node.node_id.slice(-8), // 使用node_id的最后8位作为短ID
+                id: node.node_id.slice(-8),
                 name: nodeIdentifier || `节点-${node.node_ip}`,
                 fullName: `${nodeIdentifier || '未知'} (${node.node_ip})`,
                 nodeIp: node.node_ip,
@@ -135,252 +119,209 @@ class RayClusterMonitor {
                 tasks: tasks,
                 status: node.state === 'ALIVE' ? 'active' : 'dead',
                 stateMessage: node.state_message,
-                connectionType: connectionType, // 添加连接类型
+                connectionType: connectionType,
                 resources: {
                     totalCpu: node.resources_total.CPU || 0,
-                    totalMemory: Math.round((node.resources_total.memory || 0) / (1024**3)), // 转换为GB
+                    totalMemory: Math.round((node.resources_total.memory || 0) / (1024**3)),
                     totalGpu: node.resources_total.GPU || 0,
                     objectStore: Math.round((node.resources_total.object_store_memory || 0) / (1024**3))
                 }
             };
             
-            console.log('解析后的节点:', parsedNode);
             parsedNodes.push(parsedNode);
         });
         
-        console.log('解析完成，总节点数:', parsedNodes.length);
         return parsedNodes;
     }
 
     createMockData() {
-        // 基于真实Ray API响应结构创建模拟数据 - 包含22个节点
-        const mockNodes = [
-            // 活跃的GPU节点
+        // 基于新API响应结构创建模拟数据 - 包含23个节点
+        const mockData = [
             {
-                node_id: "03aba4392c3fa6de0498262fdbd2378127e70e396c4725d778d156fe",
-                node_ip: "10.30.2.11",
-                state: "ALIVE",
-                is_head_node: false,
-                state_message: null,
-                resources_total: {
-                    "CPU": 8.0, "memory": 853461934080.0, "GPU": 1.0, "G1": 1.0, "Wired": 1.0, "object_store_memory": 200000000000.0
+                "id": "5681df0b",
+                "name": "G3",
+                "fullName": "G3 (10.30.2.11)",
+                "nodeIp": "10.30.2.11",
+                "nodeId": "0201fe33d057d28ad27c4e73a5c0abac0430ae2a9edb30775681df0b",
+                "state": "ALIVE",
+                "isHeadNode": false,
+                "cpu": 65.6,
+                "memory": 64.9,
+                "gpu": 23.9,
+                "tasks": [
+                    "CPU密集任务",
+                    "内存密集任务"
+                ],
+                "status": "active",
+                "stateMessage": null,
+                "connectionType": "wired",
+                "resources": {
+                    "totalCpu": 8.0,
+                    "totalMemory": 790,
+                    "totalGpu": 1.0,
+                    "objectStore": 186
                 }
             },
             {
-                node_id: "0a5e872df56a2710f0405e6521456b8ca63462f4a52696d77568662a",
-                node_ip: "10.30.2.11",
-                state: "ALIVE",
-                is_head_node: true,
-                state_message: null,
-                resources_total: {
-                    "CPU": 16.0, "memory": 853778788352.0, "node:__internal_head__": 1.0, "Wired": 1.0, "object_store_memory": 200000000000.0
+                "id": "27254c92",
+                "name": "G1",
+                "fullName": "G1 (10.30.2.11)",
+                "nodeIp": "10.30.2.11",
+                "nodeId": "0f37fe145952c4c5d5d858e3f61af7038e65c5f18699a73727254c92",
+                "state": "ALIVE",
+                "isHeadNode": false,
+                "cpu": 29.9,
+                "memory": 66.3,
+                "gpu": 13.1,
+                "tasks": [
+                    "内存密集任务"
+                ],
+                "status": "active",
+                "stateMessage": null,
+                "connectionType": "wired",
+                "resources": {
+                    "totalCpu": 8.0,
+                    "totalMemory": 791,
+                    "totalGpu": 1.0,
+                    "objectStore": 186
                 }
             },
             {
-                node_id: "5fc01d8a809ab3d22642795d49a8323ec2c6821395a1bc1f8a0b88dc",
-                node_ip: "10.30.2.11",
-                state: "ALIVE",
-                is_head_node: false,
-                state_message: null,
-                resources_total: {
-                    "CPU": 8.0, "memory": 852027138048.0, "GPU": 1.0, "G7": 1.0, "Wired": 1.0, "object_store_memory": 200000000000.0
+                "id": "5964abc5",
+                "name": "M5",
+                "fullName": "M5 (10.30.2.11)",
+                "nodeIp": "10.30.2.11",
+                "nodeId": "13d25d526e60e548a927bcae7aa6eaf13de40480273cfb6e5964abc5",
+                "state": "ALIVE",
+                "isHeadNode": false,
+                "cpu": 75.3,
+                "memory": 22.5,
+                "gpu": 46.4,
+                "tasks": [
+                    "CPU密集任务",
+                    "GPU计算任务"
+                ],
+                "status": "active",
+                "stateMessage": null,
+                "connectionType": "wired",
+                "resources": {
+                    "totalCpu": 256.0,
+                    "totalMemory": 788,
+                    "totalGpu": 8.0,
+                    "objectStore": 186
                 }
             },
             {
-                node_id: "6c09d9f72f3c0721f39a9c52df9216f6602b0927379bbf813af5ea37",
-                node_ip: "10.30.2.11",
-                state: "ALIVE",
-                is_head_node: false,
-                state_message: null,
-                resources_total: {
-                    "CPU": 8.0, "memory": 852612415488.0, "GPU": 1.0, "G4": 1.0, "Wired": 1.0, "object_store_memory": 200000000000.0
+                "id": "c7c8769a",
+                "name": "J1",
+                "fullName": "J1 (10.30.2.11)",
+                "nodeIp": "10.30.2.11",
+                "nodeId": "514cb48d316a78af4b26beed6ed861abc61b818ca0da6c6bc7c8769a",
+                "state": "ALIVE",
+                "isHeadNode": false,
+                "cpu": 23.4,
+                "memory": 38.1,
+                "gpu": 89.0,
+                "tasks": [
+                    "GPU计算任务"
+                ],
+                "status": "active",
+                "stateMessage": null,
+                "connectionType": "wireless",
+                "resources": {
+                    "totalCpu": 256.0,
+                    "totalMemory": 786,
+                    "totalGpu": 8.0,
+                    "objectStore": 186
                 }
             },
             {
-                node_id: "7d256721a07c34c450daae285b5afd0ff5a4cfa9029b2aa98cd53dc6",
-                node_ip: "10.30.2.11",
-                state: "ALIVE",
-                is_head_node: false,
-                state_message: null,
-                resources_total: {
-                    "CPU": 8.0, "memory": 852181164032.0, "GPU": 1.0, "G6": 1.0, "Wired": 1.0, "object_store_memory": 200000000000.0
-                }
-            },
-            {
-                node_id: "9f67e94c5eb55dc2c401ca7bf02685e18496791b2a54de278b6442f8",
-                node_ip: "10.30.2.11",
-                state: "ALIVE",
-                is_head_node: false,
-                state_message: null,
-                resources_total: {
-                    "CPU": 8.0, "memory": 853178167296.0, "GPU": 1.0, "G2": 1.0, "Wired": 1.0, "object_store_memory": 200000000000.0
-                }
-            },
-            {
-                node_id: "c3d96df185904fcfd5dbb91f1e33c229749973069a6763527b647c1d",
-                node_ip: "10.30.2.11",
-                state: "ALIVE",
-                is_head_node: false,
-                state_message: null,
-                resources_total: {
-                    "CPU": 8.0, "memory": 852454854656.0, "GPU": 1.0, "G5": 1.0, "Wired": 1.0, "object_store_memory": 200000000000.0
-                }
-            },
-            {
-                node_id: "dc71d882a1c9df13c5381ab83fcab87d87a8278d38fa0470e62f2ab0",
-                node_ip: "10.30.2.11",
-                state: "ALIVE",
-                is_head_node: false,
-                state_message: null,
-                resources_total: {
-                    "CPU": 8.0, "memory": 851842572288.0, "GPU": 1.0, "G8": 1.0, "Wired": 1.0, "object_store_memory": 200000000000.0
-                }
-            },
-            {
-                node_id: "f78d4afcb313dc0f3b7725fcedd62c37856aca5d690eb15570d35057",
-                node_ip: "10.30.2.11",
-                state: "ALIVE",
-                is_head_node: false,
-                state_message: null,
-                resources_total: {
-                    "CPU": 8.0, "memory": 852891738112.0, "GPU": 1.0, "G3": 1.0, "Wired": 1.0, "object_store_memory": 200000000000.0
-                }
-            },
-            // 无线连接节点
-            {
-                node_id: "36532ce1aa8fab9d2d9015364b6f0c0216d12b7252ebd7cc223a3d01",
-                node_ip: "10.12.133.251",
-                state: "ALIVE",
-                is_head_node: false,
-                state_message: null,
-                resources_total: {
-                    "CPU": 8.0, "memory": 44418435892.0, "GPU": 1.0, "J1": 1.0, "Wireless": 1.0, "object_store_memory": 19036472524.0
-                }
-            },
-            // 离线节点
-            {
-                node_id: "180f4337a55f184e1b253ec6556439ed069281b0c8f65496b629f114",
-                node_ip: "10.30.37.210",
-                state: "DEAD",
-                is_head_node: false,
-                state_message: "Unexpected termination: health check failed due to missing too many heartbeats",
-                resources_total: {
-                    "CPU": 4.0, "memory": 4834572288.0, "M3": 1.0, "Wired": 1.0, "object_store_memory": 2071959552.0
-                }
-            },
-            {
-                node_id: "5c3a636a77ca91898994ba267aaf4dfd8021b4430b68aa4e8ce78dbb",
-                node_ip: "10.30.38.46",
-                state: "DEAD",
-                is_head_node: false,
-                state_message: "Unexpected termination: health check failed due to missing too many heartbeats",
-                resources_total: {
-                    "CPU": 4.0, "memory": 4064585728.0, "M1": 1.0, "Wired": 1.0, "object_store_memory": 1741965312.0
-                }
-            },
-            {
-                node_id: "5d026ae9d484104f3f8f5d59b36453be559f4684ac6230b3beee3ca8",
-                node_ip: "10.30.35.171",
-                state: "DEAD",
-                is_head_node: false,
-                state_message: "Unexpected termination: health check failed due to missing too many heartbeats",
-                resources_total: {
-                    "CPU": 4.0, "memory": 4845421773.0, "M7": 1.0, "Wired": 1.0, "object_store_memory": 2076609331.0
-                }
-            },
-            {
-                node_id: "655c1fdbf28e0e76c5ddb4cd762e33588ea9f1f415d05b1e69aa234c",
-                node_ip: "10.30.35.60",
-                state: "DEAD",
-                is_head_node: false,
-                state_message: "Unexpected termination: health check failed due to missing too many heartbeats",
-                resources_total: {
-                    "CPU": 4.0, "memory": 4354175796.0, "M13": 1.0, "Wired": 1.0, "object_store_memory": 1866075340.0
-                }
-            },
-            {
-                node_id: "8a98884d8bdc2bbeb40b63d5e8902d6e5ddb410c9d8398330a60d14e",
-                node_ip: "10.30.34.213",
-                state: "DEAD",
-                is_head_node: false,
-                state_message: "Unexpected termination: health check failed due to missing too many heartbeats",
-                resources_total: {
-                    "CPU": 4.0, "memory": 4736221594.0, "M6": 1.0, "Wired": 1.0, "object_store_memory": 2029809254.0
-                }
-            },
-            {
-                node_id: "8aa991895ad2c5a21508c8e64adfc3001a7e96d576fc95d2381b4c0b",
-                node_ip: "10.30.37.207",
-                state: "DEAD",
-                is_head_node: false,
-                state_message: "Unexpected termination: health check failed due to missing too many heartbeats",
-                resources_total: {
-                    "CPU": 4.0, "memory": 4911955149.0, "M2": 1.0, "Wired": 1.0, "object_store_memory": 2105123635.0
-                }
-            },
-            {
-                node_id: "8d638e7fccb232d40ea8b6d03e057ac9968208e9226117f8701fabef",
-                node_ip: "10.30.34.98",
-                state: "DEAD",
-                is_head_node: false,
-                state_message: "Unexpected termination: health check failed due to missing too many heartbeats",
-                resources_total: {
-                    "CPU": 4.0, "memory": 4646658868.0, "M10": 1.0, "Wired": 1.0, "object_store_memory": 1991425228.0
-                }
-            },
-            {
-                node_id: "ac9c051c9d78b6b2cfa970176c3bc9b800f5928ecf47c9c904a6f33a",
-                node_ip: "10.30.35.133",
-                state: "DEAD",
-                is_head_node: false,
-                state_message: "Unexpected termination: health check failed due to missing too many heartbeats",
-                resources_total: {
-                    "CPU": 4.0, "memory": 4843675648.0, "M8": 1.0, "Wired": 1.0, "object_store_memory": 2075860992.0
-                }
-            },
-            {
-                node_id: "c2b5f77b3fa5311cf65434b39f185ef5045b94493c40e8d45188edd3",
-                node_ip: "10.30.37.199",
-                state: "DEAD",
-                is_head_node: false,
-                state_message: "Unexpected termination: health check failed due to missing too many heartbeats",
-                resources_total: {
-                    "CPU": 4.0, "memory": 4828012135.0, "M5": 1.0, "Wired": 1.0, "object_store_memory": 2069148057.0
-                }
-            },
-            {
-                node_id: "d85c7abe987a7c01879449eb0b033cf18b2700f0d046d8409c2e36da",
-                node_ip: "10.30.35.52",
-                state: "DEAD",
-                is_head_node: false,
-                state_message: "Unexpected termination: health check failed due to missing too many heartbeats",
-                resources_total: {
-                    "CPU": 4.0, "memory": 4850250138.0, "M11": 1.0, "Wired": 1.0, "object_store_memory": 2078678630.0
-                }
-            },
-            {
-                node_id: "e449e34e6589e2f852cbf084bfedad1fe78a92a8d1ea320b8e7766dd",
-                node_ip: "10.30.39.57",
-                state: "DEAD",
-                is_head_node: false,
-                state_message: "Unexpected termination: health check failed due to missing too many heartbeats",
-                resources_total: {
-                    "CPU": 4.0, "memory": 4843761664.0, "M12": 1.0, "Wired": 1.0, "object_store_memory": 2075897856.0
-                }
-            },
-            {
-                node_id: "fe84b074caaeabda0c67e52934a56290da83716d69f480c24cf97fcf",
-                node_ip: "10.30.35.135",
-                state: "DEAD",
-                is_head_node: false,
-                state_message: "Unexpected termination: health check failed due to missing too many heartbeats",
-                resources_total: {
-                    "CPU": 4.0, "memory": 4880324199.0, "M4": 1.0, "Wired": 1.0, "object_store_memory": 2091567513.0
+                "id": "3a8f0aef",
+                "name": "HEAD节点",
+                "fullName": "HEAD节点 (10.30.2.11)",
+                "nodeIp": "10.30.2.11",
+                "nodeId": "fde2bbb3d8a2067c0c0d76e4d79eb1bea187d19e70922d823a8f0aef",
+                "state": "ALIVE",
+                "isHeadNode": true,
+                "cpu": 24.0,
+                "memory": 27.6,
+                "gpu": 0,
+                "tasks": [
+                    "集群管理"
+                ],
+                "status": "active",
+                "stateMessage": null,
+                "connectionType": "unknown",
+                "resources": {
+                    "totalCpu": 16.0,
+                    "totalMemory": 791,
+                    "totalGpu": 0,
+                    "objectStore": 186
                 }
             }
         ];
+
+        // 扩展到完整的23个节点 (包含更多的M系列和G系列节点)
+        const additionalNodes = [
+            { name: "G2", cpu: 68.8, memory: 72.9, gpu: 63.1, totalCpu: 8, totalGpu: 1 },
+            { name: "G4", cpu: 27.2, memory: 61.4, gpu: 51.0, totalCpu: 8, totalGpu: 1 },
+            { name: "G5", cpu: 30.0, memory: 72.9, gpu: 13.5, totalCpu: 8, totalGpu: 1 },
+            { name: "G6", cpu: 55.3, memory: 33.9, gpu: 66.9, totalCpu: 8, totalGpu: 1 },
+            { name: "G7", cpu: 73.0, memory: 37.1, gpu: 53.1, totalCpu: 8, totalGpu: 1 },
+            { name: "G8", cpu: 51.7, memory: 61.8, gpu: 81.8, totalCpu: 8, totalGpu: 1 },
+            { name: "M1", cpu: 65.8, memory: 41.7, gpu: 51.7, totalCpu: 256, totalGpu: 8 },
+            { name: "M2", cpu: 50.7, memory: 21.3, gpu: 22.6, totalCpu: 256, totalGpu: 8 },
+            { name: "M3", cpu: 70.5, memory: 41.3, gpu: 12.1, totalCpu: 256, totalGpu: 8 },
+            { name: "M4", cpu: 34.2, memory: 32.7, gpu: 36.0, totalCpu: 256, totalGpu: 8 },
+            { name: "M6", cpu: 42.6, memory: 49.9, gpu: 67.3, totalCpu: 256, totalGpu: 8 },
+            { name: "M7", cpu: 76.3, memory: 63.4, gpu: 42.9, totalCpu: 256, totalGpu: 8 },
+            { name: "M8", cpu: 65.4, memory: 69.8, gpu: 39.6, totalCpu: 256, totalGpu: 8 },
+            { name: "M9", cpu: 25.1, memory: 21.3, gpu: 83.1, totalCpu: 256, totalGpu: 8 },
+            { name: "M10", cpu: 79.1, memory: 64.8, gpu: 51.6, totalCpu: 256, totalGpu: 8 },
+            { name: "M11", cpu: 40.6, memory: 43.5, gpu: 26.4, totalCpu: 256, totalGpu: 8 },
+            { name: "M12", cpu: 35.8, memory: 18.5, gpu: 10.1, totalCpu: 256, totalGpu: 8 },
+            { name: "M13", cpu: 30.1, memory: 44.0, gpu: 25.5, totalCpu: 256, totalGpu: 8 }
+        ];
+
+        additionalNodes.forEach((node, index) => {
+            const nodeId = `mock${index + 6}`;
+            mockData.push({
+                id: nodeId,
+                name: node.name,
+                fullName: `${node.name} (10.30.2.11)`,
+                nodeIp: "10.30.2.11",
+                nodeId: `mock-node-id-${nodeId}`,
+                state: "ALIVE",
+                isHeadNode: false,
+                cpu: node.cpu,
+                memory: node.memory,
+                gpu: node.gpu,
+                tasks: this.generateTasksByUsage(node.cpu, node.memory, node.gpu),
+                status: "active",
+                stateMessage: null,
+                connectionType: "wired",
+                resources: {
+                    totalCpu: node.totalCpu,
+                    totalMemory: Math.floor(Math.random() * 50) + 750, // 750-800 GB
+                    totalGpu: node.totalGpu,
+                    objectStore: 186
+                }
+            });
+        });
+
+        return mockData;
+    }
+
+    generateTasksByUsage(cpu, memory, gpu) {
+        const tasks = [];
         
-        return this.parseRayNodes(mockNodes);
+        if (cpu > 70) tasks.push("CPU密集任务");
+        if (memory > 70) tasks.push("内存密集任务");
+        if (gpu > 50) tasks.push("GPU计算任务");
+        
+        if (tasks.length === 0) tasks.push("空闲");
+        
+        return tasks;
     }
 
     getConnectionType(resourcesTotal) {
@@ -470,13 +411,18 @@ class RayClusterMonitor {
         const wiredNodes = nodeData.filter(n => n.connectionType === 'wired').length;
         const wirelessNodes = nodeData.filter(n => n.connectionType === 'wireless').length;
         
-        const avgCpu = nodeData.length > 0 ? 
-            Math.round(nodeData.reduce((sum, n) => sum + n.cpu, 0) / nodeData.length) : 0;
-        const avgMemory = nodeData.length > 0 ? 
-            Math.round(nodeData.reduce((sum, n) => sum + n.memory, 0) / nodeData.length) : 0;
-        const totalTasks = nodeData.reduce((sum, n) => sum + n.tasks.length, 0);
+        // 计算平均使用率（仅活跃节点）
+        const activeNodeData = nodeData.filter(n => n.status === 'active');
+        const avgCpu = activeNodeData.length > 0 ? 
+            Math.round(activeNodeData.reduce((sum, n) => sum + n.cpu, 0) / activeNodeData.length) : 0;
+        const avgMemory = activeNodeData.length > 0 ? 
+            Math.round(activeNodeData.reduce((sum, n) => sum + n.memory, 0) / activeNodeData.length) : 0;
+        
+        // 计算总任务数
+        const totalTasks = nodeData.reduce((sum, n) => sum + (n.tasks ? n.tasks.length : 0), 0);
 
-        document.getElementById('activeNodes').textContent = `${activeNodes}/${nodeData.length} (${deadNodes}个离线)`;
+        // 更新界面显示
+        document.getElementById('activeNodes').textContent = `${activeNodes}/${nodeData.length}${deadNodes > 0 ? ` (${deadNodes}个离线)` : ''}`;
         document.getElementById('avgCpu').textContent = `${avgCpu}%`;
         document.getElementById('avgMemory').textContent = `${avgMemory}%`;
         document.getElementById('wiredNodes').textContent = wiredNodes;
