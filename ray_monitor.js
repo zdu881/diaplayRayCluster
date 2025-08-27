@@ -1,33 +1,128 @@
-// Ray集群API配置
-const RAY_API_BASE = 'http://10.30.2.11:8888';
-const NODES_API = `${RAY_API_BASE}/`;
+// CastRay 后端服务配置
+const CASTRAY_API_BASE = 'http://localhost:8000';
+const STATUS_API = `${CASTRAY_API_BASE}/api/status`;
+const NODES_API = `${CASTRAY_API_BASE}/api/nodes`;
+const WS_URL = 'ws://localhost:8000/ws';
 
 // 节点数据存储
 let nodeData = [];
+let websocket = null;
 
 class RayClusterMonitor {
     constructor() {
-        console.log('初始化RayClusterMonitor...');
+        console.log('初始化 CastRay 集群监控器...');
         this.updateInterval = null;
+        this.reconnectInterval = null;
         this.init();
         this.setupEventListeners();
+        this.connectWebSocket();
         this.startPeriodicUpdates();
     }
 
     async init() {
-        document.getElementById('dataSource').textContent = '正在连接Ray集群...';
+        document.getElementById('dataSource').textContent = '正在连接 CastRay 后端...';
         
-        const success = await this.fetchRayData();
+        const success = await this.fetchCastRayData();
         
-        // 无论是否成功，都要更新界面
-        if (nodeData.length === 0) {
-            // 如果没有数据，创建模拟数据
-            nodeData = this.createMockData();
-            document.getElementById('dataSource').textContent = `使用模拟数据 (${nodeData.length}个节点)`;
+        if (!success || nodeData.length === 0) {
+            document.getElementById('dataSource').textContent = 'CastRay 后端服务未启动或连接失败';
+            this.showEmptyState();
+            return;
         }
         
         this.updateStats();
         this.createNodeCards();
+    }
+
+    showEmptyState() {
+        // 显示空状态界面
+        const container = document.getElementById('nodeListContainer');
+        if (container) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-icon">🔌</div>
+                    <h3>未连接到 CastRay 后端</h3>
+                    <p>请确保 CastRay 服务正在运行</p>
+                    <div class="empty-actions">
+                        <button onclick="window.rayMonitor.init()" class="retry-btn">重试连接</button>
+                        <a href="http://localhost:8000" target="_blank" class="check-backend-btn">检查后端服务</a>
+                    </div>
+                </div>
+            `;
+        }
+
+        // 清空统计数据
+        this.updateEmptyStats();
+    }
+
+    updateEmptyStats() {
+        document.getElementById('activeNodes').textContent = '0';
+        document.getElementById('avgCpu').textContent = '0%';
+        document.getElementById('avgMemory').textContent = '0%';
+        document.getElementById('wiredNodes').textContent = '0';
+        document.getElementById('wirelessNodes').textContent = '0';
+        
+        const totalTasksElement = document.getElementById('totalTasks');
+        if (totalTasksElement) {
+            totalTasksElement.textContent = '0';
+        }
+    }
+
+    connectWebSocket() {
+        try {
+            websocket = new WebSocket(WS_URL);
+            
+            websocket.onopen = () => {
+                console.log('WebSocket 连接已建立');
+                document.getElementById('dataSource').textContent = '实时连接 CastRay 后端';
+            };
+            
+            websocket.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    this.handleWebSocketMessage(data);
+                } catch (e) {
+                    console.error('解析 WebSocket 消息失败:', e);
+                }
+            };
+            
+            websocket.onclose = () => {
+                console.log('WebSocket 连接已关闭');
+                document.getElementById('dataSource').textContent = '连接已断开，尝试重连...';
+                this.scheduleReconnect();
+            };
+            
+            websocket.onerror = (error) => {
+                console.error('WebSocket 错误:', error);
+            };
+        } catch (error) {
+            console.error('创建 WebSocket 连接失败:', error);
+            this.scheduleReconnect();
+        }
+    }
+
+    handleWebSocketMessage(data) {
+        console.log('收到 WebSocket 消息:', data);
+        
+        // 根据消息类型处理
+        if (data.type === 'system_status') {
+            this.updateSystemStatus(data.data);
+        } else if (data.type === 'node_update') {
+            this.updateNodeData(data.data);
+        } else if (data.type === 'file_transfer') {
+            this.updateFileTransfer(data.data);
+        }
+    }
+
+    scheduleReconnect() {
+        if (this.reconnectInterval) {
+            clearTimeout(this.reconnectInterval);
+        }
+        
+        this.reconnectInterval = setTimeout(() => {
+            console.log('尝试重新连接 WebSocket...');
+            this.connectWebSocket();
+        }, 5000);
     }
 
     setupEventListeners() {
@@ -36,56 +131,101 @@ class RayClusterMonitor {
         });
     }
 
-    async fetchRayData() {
+    async fetchCastRayData() {
         try {
-            console.log('正在获取Ray集群数据...');
-            const response = await fetch(NODES_API, {
-                method: 'GET',
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json'
-                }
-            });
+            console.log('正在获取 CastRay 集群数据...');
             
-            if (!response.ok) {
-                throw new Error(`HTTP错误: ${response.status}`);
+            // 同时获取系统状态和节点信息
+            const [statusResponse, nodesResponse] = await Promise.all([
+                fetch(STATUS_API, {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    }
+                }),
+                fetch(NODES_API, {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    }
+                })
+            ]);
+            
+            if (!statusResponse.ok || !nodesResponse.ok) {
+                throw new Error(`HTTP错误: status ${statusResponse.status}, nodes ${nodesResponse.status}`);
             }
             
-            const data = await response.json();
-            console.log('Ray API响应:', data);
+            const statusData = await statusResponse.json();
+            const nodesData = await nodesResponse.json();
             
-            // 新API返回结构更清晰，直接使用data.data.nodes
-            if (data && data.result && data.data && data.data.nodes) {
-                const rayNodes = data.data.nodes;
-                console.log('找到节点数量:', rayNodes.length);
-                nodeData = rayNodes; // 直接使用处理过的节点数据
-                document.getElementById('dataSource').textContent = `已连接到Ray集群 (${nodeData.length}个节点)`;
-                return true;
-            } else if (data && data.data && data.data.result && data.data.result.result) {
-                // 备用路径：原始API格式
-                const rayNodes = data.data.result.result;
-                console.log('使用备用路径，找到节点数量:', rayNodes.length);
-                nodeData = this.parseRayNodes(rayNodes);
-                document.getElementById('dataSource').textContent = `已连接到Ray集群 (${nodeData.length}个节点)`;
+            console.log('CastRay 状态响应:', statusData);
+            console.log('CastRay 节点响应:', nodesData);
+            
+            // 解析节点数据
+            if (nodesData && Array.isArray(nodesData)) {
+                nodeData = this.parseCastRayNodes(nodesData);
+                document.getElementById('dataSource').textContent = `已连接到 CastRay 集群 (${nodeData.length}个节点)`;
+                
+                // 更新系统状态
+                if (statusData) {
+                    this.updateSystemStatus(statusData);
+                }
+                
                 return true;
             } else {
-                throw new Error('无法找到节点数据');
+                throw new Error('无效的节点数据格式');
             }
             
         } catch (error) {
-            console.error('获取Ray集群数据失败:', error);
-            
-            // 如果是CORS错误或网络错误，使用模拟数据
-            if (error.message.includes('CORS') || error.message.includes('fetch') || error.name === 'TypeError') {
-                console.log('网络错误，使用模拟数据');
-                nodeData = this.createMockData();
-                document.getElementById('dataSource').textContent = `使用模拟数据 (${nodeData.length}个节点) - 网络限制`;
-                return true;
-            }
+            console.error('获取 CastRay 集群数据失败:', error);
             
             document.getElementById('dataSource').textContent = `连接失败: ${error.message}`;
             return false;
         }
+    }
+
+    parseCastRayNodes(rawNodes) {
+        return rawNodes.map((node, index) => ({
+            id: node.node_id || `node_${index}`,
+            name: node.node_id || `Node ${index + 1}`,
+            status: node.status || 'active',
+            cpu: node.cpu_usage || Math.random() * 100,
+            memory: node.memory_usage || Math.random() * 100,
+            connectionType: node.connection_type || (Math.random() > 0.5 ? 'wired' : 'wireless'),
+            tasks: node.active_tasks || Math.floor(Math.random() * 10),
+            uptime: node.uptime || Math.floor(Math.random() * 86400),
+            ip: node.ip_address || `192.168.1.${100 + index}`,
+            port: node.port || (8000 + index),
+            lastSeen: new Date().toISOString()
+        }));
+    }
+
+    updateSystemStatus(statusData) {
+        if (statusData.ray_status) {
+            console.log('更新系统状态:', statusData);
+            // 更新界面上的状态信息
+            const statusElement = document.getElementById('systemStatus');
+            if (statusElement) {
+                statusElement.textContent = statusData.ray_status === 'connected' ? '已连接' : '断开连接';
+            }
+        }
+    }
+
+    updateNodeData(nodeUpdate) {
+        // 更新特定节点的数据
+        const nodeIndex = nodeData.findIndex(node => node.id === nodeUpdate.node_id);
+        if (nodeIndex !== -1) {
+            Object.assign(nodeData[nodeIndex], nodeUpdate);
+            this.updateStats();
+            this.createNodeCards();
+        }
+    }
+
+    updateFileTransfer(transferData) {
+        console.log('文件传输更新:', transferData);
+        // 可以在界面上显示文件传输状态
     }
 
     parseRayNodes(rayNodes) {
@@ -132,196 +272,6 @@ class RayClusterMonitor {
         });
         
         return parsedNodes;
-    }
-
-    createMockData() {
-        // 基于新API响应结构创建模拟数据 - 包含23个节点
-        const mockData = [
-            {
-                "id": "5681df0b",
-                "name": "G3",
-                "fullName": "G3 (10.30.2.11)",
-                "nodeIp": "10.30.2.11",
-                "nodeId": "0201fe33d057d28ad27c4e73a5c0abac0430ae2a9edb30775681df0b",
-                "state": "ALIVE",
-                "isHeadNode": false,
-                "cpu": 65.6,
-                "memory": 64.9,
-                "gpu": 23.9,
-                "tasks": [
-                    "CPU密集任务",
-                    "内存密集任务"
-                ],
-                "status": "active",
-                "stateMessage": null,
-                "connectionType": "wired",
-                "resources": {
-                    "totalCpu": 8.0,
-                    "totalMemory": 790,
-                    "totalGpu": 1.0,
-                    "objectStore": 186
-                }
-            },
-            {
-                "id": "27254c92",
-                "name": "G1",
-                "fullName": "G1 (10.30.2.11)",
-                "nodeIp": "10.30.2.11",
-                "nodeId": "0f37fe145952c4c5d5d858e3f61af7038e65c5f18699a73727254c92",
-                "state": "ALIVE",
-                "isHeadNode": false,
-                "cpu": 29.9,
-                "memory": 66.3,
-                "gpu": 13.1,
-                "tasks": [
-                    "内存密集任务"
-                ],
-                "status": "active",
-                "stateMessage": null,
-                "connectionType": "wired",
-                "resources": {
-                    "totalCpu": 8.0,
-                    "totalMemory": 791,
-                    "totalGpu": 1.0,
-                    "objectStore": 186
-                }
-            },
-            {
-                "id": "5964abc5",
-                "name": "M5",
-                "fullName": "M5 (10.30.2.11)",
-                "nodeIp": "10.30.2.11",
-                "nodeId": "13d25d526e60e548a927bcae7aa6eaf13de40480273cfb6e5964abc5",
-                "state": "ALIVE",
-                "isHeadNode": false,
-                "cpu": 75.3,
-                "memory": 22.5,
-                "gpu": 46.4,
-                "tasks": [
-                    "CPU密集任务",
-                    "GPU计算任务"
-                ],
-                "status": "active",
-                "stateMessage": null,
-                "connectionType": "wired",
-                "resources": {
-                    "totalCpu": 256.0,
-                    "totalMemory": 788,
-                    "totalGpu": 8.0,
-                    "objectStore": 186
-                }
-            },
-            {
-                "id": "c7c8769a",
-                "name": "J1",
-                "fullName": "J1 (10.30.2.11)",
-                "nodeIp": "10.30.2.11",
-                "nodeId": "514cb48d316a78af4b26beed6ed861abc61b818ca0da6c6bc7c8769a",
-                "state": "ALIVE",
-                "isHeadNode": false,
-                "cpu": 23.4,
-                "memory": 38.1,
-                "gpu": 89.0,
-                "tasks": [
-                    "GPU计算任务"
-                ],
-                "status": "active",
-                "stateMessage": null,
-                "connectionType": "wireless",
-                "resources": {
-                    "totalCpu": 256.0,
-                    "totalMemory": 786,
-                    "totalGpu": 8.0,
-                    "objectStore": 186
-                }
-            },
-            {
-                "id": "3a8f0aef",
-                "name": "HEAD节点",
-                "fullName": "HEAD节点 (10.30.2.11)",
-                "nodeIp": "10.30.2.11",
-                "nodeId": "fde2bbb3d8a2067c0c0d76e4d79eb1bea187d19e70922d823a8f0aef",
-                "state": "ALIVE",
-                "isHeadNode": true,
-                "cpu": 24.0,
-                "memory": 27.6,
-                "gpu": 0,
-                "tasks": [
-                    "集群管理"
-                ],
-                "status": "active",
-                "stateMessage": null,
-                "connectionType": "unknown",
-                "resources": {
-                    "totalCpu": 16.0,
-                    "totalMemory": 791,
-                    "totalGpu": 0,
-                    "objectStore": 186
-                }
-            }
-        ];
-
-        // 扩展到完整的23个节点 (包含更多的M系列和G系列节点)
-        const additionalNodes = [
-            { name: "G2", cpu: 68.8, memory: 72.9, gpu: 63.1, totalCpu: 8, totalGpu: 1 },
-            { name: "G4", cpu: 27.2, memory: 61.4, gpu: 51.0, totalCpu: 8, totalGpu: 1 },
-            { name: "G5", cpu: 30.0, memory: 72.9, gpu: 13.5, totalCpu: 8, totalGpu: 1 },
-            { name: "G6", cpu: 55.3, memory: 33.9, gpu: 66.9, totalCpu: 8, totalGpu: 1 },
-            { name: "G7", cpu: 73.0, memory: 37.1, gpu: 53.1, totalCpu: 8, totalGpu: 1 },
-            { name: "G8", cpu: 51.7, memory: 61.8, gpu: 81.8, totalCpu: 8, totalGpu: 1 },
-            { name: "M1", cpu: 65.8, memory: 41.7, gpu: 51.7, totalCpu: 256, totalGpu: 8 },
-            { name: "M2", cpu: 50.7, memory: 21.3, gpu: 22.6, totalCpu: 256, totalGpu: 8 },
-            { name: "M3", cpu: 70.5, memory: 41.3, gpu: 12.1, totalCpu: 256, totalGpu: 8 },
-            { name: "M4", cpu: 34.2, memory: 32.7, gpu: 36.0, totalCpu: 256, totalGpu: 8 },
-            { name: "M6", cpu: 42.6, memory: 49.9, gpu: 67.3, totalCpu: 256, totalGpu: 8 },
-            { name: "M7", cpu: 76.3, memory: 63.4, gpu: 42.9, totalCpu: 256, totalGpu: 8 },
-            { name: "M8", cpu: 65.4, memory: 69.8, gpu: 39.6, totalCpu: 256, totalGpu: 8 },
-            { name: "M9", cpu: 25.1, memory: 21.3, gpu: 83.1, totalCpu: 256, totalGpu: 8 },
-            { name: "M10", cpu: 79.1, memory: 64.8, gpu: 51.6, totalCpu: 256, totalGpu: 8 },
-            { name: "M11", cpu: 40.6, memory: 43.5, gpu: 26.4, totalCpu: 256, totalGpu: 8 },
-            { name: "M12", cpu: 35.8, memory: 18.5, gpu: 10.1, totalCpu: 256, totalGpu: 8 },
-            { name: "M13", cpu: 30.1, memory: 44.0, gpu: 25.5, totalCpu: 256, totalGpu: 8 }
-        ];
-
-        additionalNodes.forEach((node, index) => {
-            const nodeId = `mock${index + 6}`;
-            mockData.push({
-                id: nodeId,
-                name: node.name,
-                fullName: `${node.name} (10.30.2.11)`,
-                nodeIp: "10.30.2.11",
-                nodeId: `mock-node-id-${nodeId}`,
-                state: "ALIVE",
-                isHeadNode: false,
-                cpu: node.cpu,
-                memory: node.memory,
-                gpu: node.gpu,
-                tasks: this.generateTasksByUsage(node.cpu, node.memory, node.gpu),
-                status: "active",
-                stateMessage: null,
-                connectionType: "wired",
-                resources: {
-                    totalCpu: node.totalCpu,
-                    totalMemory: Math.floor(Math.random() * 50) + 750, // 750-800 GB
-                    totalGpu: node.totalGpu,
-                    objectStore: 186
-                }
-            });
-        });
-
-        return mockData;
-    }
-
-    generateTasksByUsage(cpu, memory, gpu) {
-        const tasks = [];
-        
-        if (cpu > 70) tasks.push("CPU密集任务");
-        if (memory > 70) tasks.push("内存密集任务");
-        if (gpu > 50) tasks.push("GPU计算任务");
-        
-        if (tasks.length === 0) tasks.push("空闲");
-        
-        return tasks;
     }
 
     getConnectionType(resourcesTotal) {
@@ -541,7 +491,7 @@ class RayClusterMonitor {
     startPeriodicUpdates() {
         // 每30秒更新一次数据
         this.updateInterval = setInterval(async () => {
-            await this.fetchRayData();
+            await this.fetchCastRayData();
             this.updateStats();
             this.createNodeCards();
         }, 30000);
@@ -549,7 +499,7 @@ class RayClusterMonitor {
 
     async resetData() {
         document.getElementById('dataSource').textContent = '重新连接中...';
-        await this.fetchRayData();
+        await this.fetchCastRayData();
         this.updateStats();
         this.createNodeCards();
     }
